@@ -22,5 +22,8 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tool-subagent": "*"
   }
 }

@@ -17,11 +17,12 @@
  * - no facts about the codebase taken from pixels: a description says what the
  *   screen looks like, and CSS/tokens remain the authority on values.
  *
- * The vision sub-agent is a CONFIGURATION, not plumbing: `cordis.patch.yml`
- * mounts the stock `tool-subagent` twice — once inheriting the conversation
- * (`vision_agent`) and once fresh (`vision_agent_fresh`) — with its own
- * `agentOptions.provider`/`model` pointing at a vision route. That is why this
- * file registers tools and nothing else about delegation.
+ * The vision sub-agent is a CONFIGURATION, not plumbing: this plugin calls the
+ * stock `tool-subagent`'s exported `apply` twice — once inheriting the
+ * conversation (`vision_agent`) and once starting fresh (`vision_agent_fresh`)
+ * — with `agentOptions.provider`/`model` taken from the live Settings route.
+ * Mounting it from the plugin, rather than as a Loader row, is what keeps one
+ * machine's vision route out of a shipped bundle patch; see `src/child.ts`.
  *
  * @module dsh-vision-bridge
  */
@@ -33,6 +34,8 @@ import type { VisionVolatileConfig } from './config.ts'
 import { cacheKey, imageIdentity, readCached, writeCached } from './cache.ts'
 import { ensureInboxIgnored, listInboxImages, prepareImage, resolveInbox } from './inbox.ts'
 import { instructionFor, taskById, wrapUntrusted } from './prompts.ts'
+import { describeChildOutcome, mountVisionChildren, VISION_AGENT_FRESH_TOOL, VISION_AGENT_TOOL } from './child.ts'
+import type { VisionChildOutcome } from './child.ts'
 import { inspectVisionRoute, runVisionCall } from './vision.ts'
 import { safeGet } from './service.ts'
 import { projectDirOf } from './workspace.ts'
@@ -118,6 +121,22 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
     return { provider, model }
   }
 
+  // What the vision-child mount produced, or `undefined` when this profile has
+  // no sub-agent runtime at all. `vision_inbox` reports it, because an absent
+  // child is otherwise invisible: the caller simply never sees the tool.
+  let childOutcome: VisionChildOutcome | undefined = undefined
+
+  /** Both children absent for one shared reason. */
+  function noChildren(reason: string): VisionChildOutcome {
+    return {
+      mounted: [],
+      skipped: [
+        { toolName: VISION_AGENT_TOOL, reason },
+        { toolName: VISION_AGENT_FRESH_TOOL, reason },
+      ],
+    }
+  }
+
   ctx.tools.register(defineTool({
     name: INBOX_TOOL,
     description: 'Show the project vision inbox: which images are available, the configured vision '
@@ -145,6 +164,7 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
           routeReady: { type: 'boolean', required: true, description: 'Whether the route declares image input.' },
           routeDetail: { type: 'string', required: true, description: 'Why the route is or is not ready.' },
           tasks: { type: 'array', items: { type: 'string' }, required: true, description: 'Available task ids.' },
+          agents: { type: 'string', required: true, description: 'Which vision sub-agents are mounted, if any.' },
           images: { type: 'array', items: { type: 'string' }, required: true, description: 'Available image paths.' },
         },
       },
@@ -174,11 +194,15 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
         }
       }
 
+      const agents = childOutcome === undefined
+        ? 'no vision sub-agent (this profile mounts no sub-agent runtime)'
+        : describeChildOutcome(childOutcome)
       const lines = [
         'Vision inbox: ' + layout.root,
         'Project: ' + layout.projectDir,
         'Enabled: ' + (resolved.enabled ? 'yes' : 'no'),
         'Route: ' + (routeLabel === '' ? '(unset)' : routeLabel) + ' — ' + routeDetail,
+        'Vision sub-agents: ' + agents,
         'Tasks: ' + resolved.tasks.map(task => task.id).join(', '),
       ]
       if (shown.length === 0) {
@@ -202,6 +226,7 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
         routeReady,
         routeDetail,
         tasks: resolved.tasks.map(task => task.id),
+        agents,
         images: shown.map(image => image.path),
       }
     },
@@ -369,5 +394,23 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
         }
       },
     }))
+
+    // Mount the vision children from here so their route is the one in this
+    // plugin's Settings form rather than a machine-local line in a bundle
+    // patch. The route is read once, at registration: `agentOptions` is static
+    // config, so a later change reaches `describe_image` at once but the
+    // children keep the route they were mounted with until the plugin reloads.
+    visionCtx.inject(['subagents', 'systemPrompt', 'sessionProjections'], (childCtx) => {
+      const resolved = reader.read(config)
+      if (!resolved.enabled) {
+        childOutcome = noChildren('the vision bridge is disabled')
+        return
+      }
+      if (resolved.route.provider === '' || resolved.route.model === '') {
+        childOutcome = noChildren('no vision route is configured')
+        return
+      }
+      childOutcome = mountVisionChildren(childCtx, resolved.route)
+    })
   })
 }

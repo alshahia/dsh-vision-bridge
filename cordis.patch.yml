@@ -5,12 +5,12 @@
 # source-only plugin but silently suppresses a card package's client bundle
 # (docs/best-practices/creating-a-client-card-plugin.md §5.1).
 #
-# The vision sub-agent rows are deliberately NOT here yet. The sub-agent is a
-# configuration of the stock `tool-subagent` plugin (agentOptions + persona +
-# toolFilter + maxDepth + modelSelectionSettings), and each mounted instance
-# needs a distinct `toolName`. They are added in task A0.7 once the base profile
-# composition is confirmed with --dump-config, so the patch never asserts a row
-# against a provider this profile does not mount.
+# The vision sub-agent rows are deliberately NOT here, and that is now the
+# design rather than a deferral. The sub-agent is a configuration of the stock
+# `tool-subagent` plugin, and a patch row's `agentOptions` is static config: a
+# shipped patch would have to hardcode one machine's vision route. The plugin
+# instead calls that package's exported `apply` twice with the route from its
+# own live Settings form (src/child.ts) — see docs/DEVIATIONS.md D-1.
 - insert:
     - id: dsh-vision-bridge
       name: 'dsh-vision-bridge'

@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { DESCRIBE_TOOL, INBOX_TOOL, apply } from '../src/index.ts'
+import { VISION_AGENT_FRESH_TOOL, VISION_AGENT_TOOL } from '../src/child.ts'
 import type { VisionVolatileConfig } from '../src/config.ts'
 import { createFakeFs, jpegBytes, pngBytes } from './helpers/fake-fs.ts'
 
@@ -51,21 +52,33 @@ function setup(options: {
   chunks?: readonly StreamChunk[]
   /** When false the `attachments`/`llm` injection never fires. */
   services?: boolean
+  /** Sub-agent providers the fake runtime registers; default both in-process ones. */
+  childProviders?: readonly string[]
 } = {}): Setup {
   const fake = createFakeFs({ files: options.files ?? FILES, ...(options.dirs === undefined ? {} : { dirs: options.dirs }) })
   const registered: ToolDefinition[] = []
   const calls: GenerateOptions[] = []
   const warnings: string[] = []
   const services = options.services !== false
-  const ctx = {
+  const childProviders = options.childProviders ?? ['fork', 'spawn']
+  const ctx: Record<string, unknown> = {
     fs: (fake.ctx as unknown as { fs: unknown }).fs,
-    tools: { register: (definition: ToolDefinition) => { registered.push(definition) } },
-    inject: (_names: readonly string[], callback: (scope: Context) => void) => {
-      if (services) callback(ctx as unknown as Context)
+    tools: {
+      register: (definition: ToolDefinition) => { registered.push(definition) },
+      get: () => undefined,
+    },
+    // Faithful to the real contract: a fiber's callback runs only once every
+    // requested service is present, so `services: false` really does mean the
+    // `attachments`/`llm` fiber never activates.
+    inject: (names: readonly string[], callback: (scope: Context) => void) => {
+      if (names.every(serviceName => ctx[serviceName] !== undefined)) callback(ctx as unknown as Context)
       return () => {}
     },
-    logger: { warn: (message: string) => { warnings.push(message) } },
-    llm: {
+    logger: { warn: (message: string) => { warnings.push(message) }, info: () => {} },
+    get: () => undefined,
+  }
+  if (services) {
+    ctx.llm = {
       async resolveModelInfo() {
         return { inputModalities: options.modalities ?? ['text', 'image'] }
       },
@@ -73,8 +86,8 @@ function setup(options: {
         calls.push(generateOptions)
         return streamOf(options.chunks ?? REPLY)
       },
-    },
-    attachments: {
+    }
+    ctx.attachments = {
       async saveImage(input: { data: Uint8Array, mediaType: string, name?: string }) {
         return {
           attachmentId: 'att-1',
@@ -85,7 +98,29 @@ function setup(options: {
           ...input.name === undefined ? {} : { name: input.name },
         }
       },
-    },
+    }
+    // The stock sub-agent runtime plus its two in-process providers.
+    ctx.subagents = {
+      getProvider: (providerName: string) => childProviders.includes(providerName)
+        ? {
+            name: providerName,
+            capabilities: {
+              agentOptions: true,
+              outputSchema: true,
+              depthLimit: true,
+              toolFilter: true,
+              persona: true,
+            },
+            inheritsParentContext: providerName === 'fork',
+          }
+        : undefined,
+      resolveMaxDepth: (configured?: number | 'provider-managed') =>
+        configured === 'provider-managed' ? undefined : configured ?? 0,
+    }
+    ctx.systemPrompt = { section: () => {}, getSectionOrder: () => 0 }
+    ctx.sessionProjections = { register: () => {} }
+    ctx.on = () => {}
+    ctx.effect = (callback: () => unknown) => callback()
   }
   apply(ctx as unknown as Context, options.config ?? CONFIG)
   return {
@@ -109,9 +144,10 @@ function execFor(cwd = PROJECT): ToolRunContext {
 }
 
 describe('apply', () => {
-  it('registers the inbox tool and the describe tool under the documented names', () => {
+  it('registers the inbox tool, the describe tool, and both vision children', () => {
     const { registered } = setup()
-    expect(registered.map(definition => definition.name).sort()).toEqual([DESCRIBE_TOOL, INBOX_TOOL].sort())
+    expect(registered.map(definition => definition.name).sort())
+      .toEqual([DESCRIBE_TOOL, INBOX_TOOL, VISION_AGENT_TOOL, VISION_AGENT_FRESH_TOOL].sort())
   })
 
   it('keeps the inbox tool when the vision services are absent', () => {
@@ -123,6 +159,26 @@ describe('apply', () => {
     const { tool } = setup()
     expect(tool(DESCRIBE_TOOL).description).toContain('untrusted data')
     expect(tool(INBOX_TOOL).description).toContain('vision inbox')
+  })
+
+  it('keeps the vision children out when the profile has no sub-agent runtime', () => {
+    const { registered } = setup({ services: false })
+    expect(registered.map(definition => definition.name)).toEqual([INBOX_TOOL])
+  })
+
+  it('reports the mounted vision children through vision_inbox', async () => {
+    const { tool } = setup()
+    const value = await tool(INBOX_TOOL).execute({ zone: 'all' }, execFor()) as Record<string, unknown>
+    expect(String(value.agents)).toContain(VISION_AGENT_TOOL)
+    expect(String(value.agents)).toContain('1 reusing this conversation')
+    expect(String(value.text)).toContain('Vision sub-agents:')
+  })
+
+  it('reports a child the profile cannot mount instead of hiding it', async () => {
+    const { registered, tool } = setup({ childProviders: ['spawn'] })
+    expect(registered.map(definition => definition.name)).not.toContain(VISION_AGENT_TOOL)
+    const value = await tool(INBOX_TOOL).execute({ zone: 'all' }, execFor()) as Record<string, unknown>
+    expect(String(value.agents)).toContain('mounts no "fork" sub-agent provider')
   })
 })
 
