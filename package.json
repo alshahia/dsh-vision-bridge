@@ -1,0 +1,26 @@
+{
+  "name": "dsh-vision-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Let a text-only model see images: a per-project image inbox, a describe_image tool that routes one image to a user-configured vision model, and a pinned vision sub-agent for multi-image UI work.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

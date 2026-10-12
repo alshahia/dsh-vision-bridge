@@ -1,0 +1,16 @@
+# dsh-vision-bridge bundle patch.
+#
+# The plugin is source-loaded: the row names the PACKAGE (not a file:// URL), so
+# a client half added later is delivered too — a file:// URL is legal for a
+# source-only plugin but silently suppresses a card package's client bundle
+# (docs/best-practices/creating-a-client-card-plugin.md §5.1).
+#
+# The vision sub-agent rows are deliberately NOT here yet. The sub-agent is a
+# configuration of the stock `tool-subagent` plugin (agentOptions + persona +
+# toolFilter + maxDepth + modelSelectionSettings), and each mounted instance
+# needs a distinct `toolName`. They are added in task A0.7 once the base profile
+# composition is confirmed with --dump-config, so the patch never asserts a row
+# against a provider this profile does not mount.
+- insert:
+    - id: dsh-vision-bridge
+      name: 'dsh-vision-bridge'
