@@ -29,17 +29,31 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import { LiveConfigReader, visionBridgeConfig } from './config.ts'
 import type { VisionVolatileConfig } from './config.ts'
 import { cacheKey, imageIdentity, readCached, writeCached } from './cache.ts'
 import { ensureInboxIgnored, listInboxImages, prepareImage, resolveInbox } from './inbox.ts'
+import type { InboxLayout } from './inbox.ts'
+import { installVisionGui } from './gui.ts'
+import { appendUpload, findUpload, listUploads, prepareUpload, readUploadIndex } from './uploads.ts'
+import type { AttachmentStoreLike } from './uploads.ts'
 import { instructionFor, taskById, wrapUntrusted } from './prompts.ts'
 import { describeChildOutcome, mountVisionChildren, VISION_AGENT_FRESH_TOOL, VISION_AGENT_TOOL } from './child.ts'
 import type { VisionChildOutcome } from './child.ts'
 import { inspectVisionRoute, runVisionCall } from './vision.ts'
 import { safeGet } from './service.ts'
 import { projectDirOf } from './workspace.ts'
-import type { ResolvedVisionConfig } from './types.ts'
+import type { InboxZone, ResolvedVisionConfig } from './types.ts'
+
+/** One inbox image as the tools list it, with the source it came from. */
+interface InboxEntry {
+  zone: InboxZone
+  name: string
+  path: string
+  bytes: number
+  source: 'folder' | 'upload'
+}
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'dsh-vision-bridge'
@@ -83,6 +97,25 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
   // The launch directory is the fallback project root for a session that
   // records none; captured once because a plugin's cwd does not change.
   const fallbackDir = process.cwd()
+
+  /**
+   * The project directory owning one session id.
+   *
+   * The panel lives in a session-scoped slot and sends its own session id, so the
+   * inbox follows the session the user is looking at rather than the process. An
+   * unknown or absent id falls back to the launch directory, which is what a
+   * session with no recorded cwd used.
+   */
+  function projectDirForSession(sessionId: string | undefined): string {
+    if (sessionId === undefined) return fallbackDir
+    try {
+      const agents = safeGet<{ get(id: string): unknown }>(ctx, 'agents')
+      const agent = agents?.get(sessionId)
+      return agent === undefined ? fallbackDir : projectDirOf(agent, fallbackDir)
+    } catch {
+      return fallbackDir
+    }
+  }
   const reader = new LiveConfigReader((message) => {
     try {
       safeGet<{ warn(message: string): void }>(ctx, 'logger')?.warn(message)
@@ -91,23 +124,61 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
     }
   })
 
-  /** Resolve the config and the owning project's inbox for one call. */
-  async function scopeFor(
+  /**
+   * Resolve the config and one project's inbox, without judging whether the
+   * bridge is enabled. The GUI needs this: a disabled bridge must still render a
+   * panel that says so, rather than a route that fails.
+   */
+  async function scopeForDir(
+    projectDir: string,
     signal: AbortSignal,
-    agent: unknown,
-  ): Promise<{ config: ResolvedVisionConfig, layout: Awaited<ReturnType<typeof resolveInbox>> }> {
+  ): Promise<{ config: ResolvedVisionConfig, layout: InboxLayout }> {
     const resolved = reader.read(config)
-    if (!resolved.enabled) {
-      throw new Error('the vision bridge is disabled; enable it in Settings -> Plugins -> '
-        + 'dsh-vision-bridge')
-    }
-    const layout = await resolveInbox(ctx, projectDirOf(agent, fallbackDir), resolved.inbox.root, signal)
+    const layout = await resolveInbox(ctx, projectDir, resolved.inbox.root, signal)
     if (resolved.inbox.gitIgnore) {
       // Best-effort hygiene: a failure to write the inbox's own .gitignore must
       // not fail an operation that had nothing to do with git.
       await ensureInboxIgnored(ctx, layout, signal).catch(() => false)
     }
     return { config: resolved, layout }
+  }
+
+  /** Resolve the config and the owning project's inbox for one call. */
+  async function scopeFor(
+    signal: AbortSignal,
+    agent: unknown,
+  ): Promise<{ config: ResolvedVisionConfig, layout: InboxLayout }> {
+    const scope = await scopeForDir(projectDirOf(agent, fallbackDir), signal)
+    if (!scope.config.enabled) {
+      throw new Error('the vision bridge is disabled; enable it in Settings -> Plugins -> '
+        + 'dsh-vision-bridge')
+    }
+    return scope
+  }
+
+  /**
+   * Read and validate one inbox image, whether it lives in a folder zone or was
+   * uploaded through the panel.
+   *
+   * Uploads are addressed by the host path the attachment store derives from its
+   * own reference, or by `zone/name`; anything else falls through to the folder
+   * path, whose containment check refuses a path outside the inbox.
+   */
+  async function prepareAny(
+    scopeCtx: Context,
+    layout: InboxLayout,
+    requestedPath: string,
+    formats: readonly ImageMediaType[],
+    maxBytes: number,
+    signal: AbortSignal,
+  ): Promise<Awaited<ReturnType<typeof prepareImage>>> {
+    const store = safeGet<AttachmentStoreLike>(scopeCtx, 'attachments')
+    if (store !== undefined) {
+      const read = await readUploadIndex(ctx, layout, signal)
+      const upload = findUpload(store, read.index, requestedPath)
+      if (upload !== undefined) return prepareUpload(store, upload, maxBytes, signal)
+    }
+    return prepareImage(scopeCtx, layout, requestedPath, formats, maxBytes, signal)
   }
 
   /** The configured route, or a failure naming the two settings that are missing. */
@@ -166,6 +237,7 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
           tasks: { type: 'array', items: { type: 'string' }, required: true, description: 'Available task ids.' },
           agents: { type: 'string', required: true, description: 'Which vision sub-agents are mounted, if any.' },
           images: { type: 'array', items: { type: 'string' }, required: true, description: 'Available image paths.' },
+          problem: { type: 'string', description: 'A caveat about the upload index, when there is one.' },
         },
       },
       render: (_args, value): ContentBlock[] => [{ type: 'text', text: value.text }],
@@ -174,7 +246,22 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
     async execute(args, exec) {
       const { config: resolved, layout } = await scopeFor(exec.signal, exec.agent)
       const zone = args.zone ?? 'all'
-      const all = await listInboxImages(ctx, layout, resolved.inbox.formats, exec.signal)
+      // Both sources are listed, and they are labelled, because they are not
+      // equally durable: a folder image is the user's own file, while an upload
+      // is an immutable object in the harness attachment store.
+      const store = safeGet<AttachmentStoreLike>(ctx, 'attachments')
+      let problem: string | undefined
+      let uploaded: Array<{ zone: InboxZone, name: string, path: string, bytes: number }> = []
+      if (store !== undefined) {
+        const read = await readUploadIndex(ctx, layout, exec.signal)
+        uploaded = listUploads(store, read.index)
+        problem = read.problem
+      }
+      const all: InboxEntry[] = [
+        ...(await listInboxImages(ctx, layout, resolved.inbox.formats, exec.signal))
+          .map(image => ({ ...image, source: 'folder' as const })),
+        ...uploaded.map(image => ({ ...image, source: 'upload' as const })),
+      ]
       const shown = zone === 'all' ? all : all.filter(image => image.zone === zone)
 
       const routeLabel = resolved.route.provider === ''
@@ -207,16 +294,19 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
       ]
       if (shown.length === 0) {
         lines.push('', zone === 'all'
-          ? 'No images yet. Put user-authored designs in ' + layout.root + '\\reference and '
-            + 'screenshots in ' + layout.root + '\\capture.'
+          ? 'No images yet. Upload one from the composer panel, or put user-authored designs in '
+            + layout.root + '\\reference and screenshots in ' + layout.root + '\\capture.'
           : 'No images in the "' + zone + '" zone.')
       } else {
         lines.push('', 'Images (' + String(shown.length) + '):')
         for (const image of shown) {
           lines.push('  ' + image.zone + '/' + image.name + ' — ' + formatBytes(image.bytes)
-            + ' — ' + image.path)
+            + ' — ' + image.source + ' — ' + (image.path === ''
+              ? '(this deployment exposes no path for it)'
+              : image.path))
         }
       }
+      if (problem !== undefined) lines.push('', 'Note: ' + problem)
       return {
         text: lines.join('\n'),
         inbox: layout.root,
@@ -227,7 +317,8 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
         routeDetail,
         tasks: resolved.tasks.map(task => task.id),
         agents,
-        images: shown.map(image => image.path),
+        images: shown.filter(image => image.path !== '').map(image => image.path),
+        ...(problem === undefined ? {} : { problem }),
       }
     },
   }))
@@ -245,7 +336,9 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
           type: 'string',
           required: true,
           description: 'Path to an image inside the project inbox; a relative path resolves against '
-            + 'the project directory. For the "compare" task this is the REFERENCE design.',
+            + 'the project directory. An image uploaded through the composer panel is addressed by the '
+            + 'exact path vision_inbox reports for it, or as "zone/name". For the "compare" task this '
+            + 'is the REFERENCE design.',
         },
         task: {
           type: 'string',
@@ -303,7 +396,7 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
             + resolved.tasks.map(entry => entry.id).join(', '))
         }
 
-        const primary = await prepareImage(visionCtx, layout, args.path, resolved.inbox.formats,
+        const primary = await prepareAny(visionCtx, layout, args.path, resolved.inbox.formats,
           resolved.inbox.maxBytes, exec.signal)
         const extraPaths = args.compare_with ?? []
         if (task.id === 'compare' && extraPaths.length === 0) {
@@ -312,7 +405,7 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
         }
         const images = [primary]
         for (const extra of extraPaths) {
-          images.push(await prepareImage(visionCtx, layout, extra, resolved.inbox.formats,
+          images.push(await prepareAny(visionCtx, layout, extra, resolved.inbox.formats,
             resolved.inbox.maxBytes, exec.signal))
         }
 
@@ -412,5 +505,30 @@ export function apply(ctx: Context, config: VisionVolatileConfig): void {
       }
       childOutcome = mountVisionChildren(childCtx, resolved.route)
     })
+  })
+
+  // The panel is registered from the base context, not the vision context: it
+  // must exist even where no LLM or attachment service is mounted, so that it can
+  // say what is missing rather than being absent. Its route is read per request,
+  // so a Settings change reaches the panel without a reload.
+  installVisionGui(ctx, {
+    projectDirFor: sessionId => projectDirForSession(sessionId),
+    scopeFor: (projectDir, signal) => scopeForDir(projectDir, signal ?? new AbortController().signal),
+    listFolder: (layout, formats, signal) => listInboxImages(ctx, layout, formats, signal),
+    readIndex: (layout, signal) => readUploadIndex(ctx, layout, signal),
+    appendIndex: async (layout, upload, signal) => { await appendUpload(ctx, layout, upload, signal) },
+    childSummary: () => childOutcome === undefined
+      ? 'no vision sub-agent (this profile mounts no sub-agent runtime)'
+      : describeChildOutcome(childOutcome),
+    probeRoute: async (provider, model, signal) => {
+      const facts = await inspectVisionRoute(ctx, provider, model, signal)
+      return {
+        imageCapable: facts.imageCapable,
+        detail: facts.imageCapable
+          ? 'declares image input'
+          : 'does not declare image input, so it cannot describe an image',
+      }
+    },
+    attachments: () => safeGet<AttachmentStoreLike>(ctx, 'attachments'),
   })
 }

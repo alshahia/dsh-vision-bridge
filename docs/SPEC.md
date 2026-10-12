@@ -159,15 +159,31 @@ already offers `agentOptions`, `persona`, `toolFilter`, `maxDepth`,
 
 ### 5.4 Host routes
 
+The **built** contract. (The first draft in this section listed `/status` and
+`/list`; they were replaced by one `/inbox` listing — see `docs/DEVIATIONS.md`
+D-4.)
+
 | Route | Method | Job |
 |---|---|---|
-| `/dsh-vision-bridge/status` | GET | enabled, resolved route + whether it declares `image`, inbox counts, cache size |
-| `/dsh-vision-bridge/list` | GET | inbox images with sha256/size/mtime/zone |
-| `/dsh-vision-bridge/upload` | POST | validated write into `reference/` |
+| `/dsh-vision-bridge/inbox` | GET | one listing: `enabled`, the resolved route and whether it declares `image`, the mounted children, the task ids, both zone directories, and every image from **both** sources with its `source` |
+| `/dsh-vision-bridge/upload` | POST | validated commit of one uploaded image |
+| `/dsh-vision-bridge/remove` | POST | **always 501** — an honest refusal, because this plugin cannot delete (D-3) |
+
+A route handler carries no Agent, so `GET /inbox` takes `?session=<id>` and the
+`POST` routes take `session` in the body; the host resolves that session's project
+directory, falling back to the launch directory. `upload` requires `zone`, `name`,
+and `data` (canonical base64, **no** `data:` prefix) and answers 400 (bad body /
+zone / name / base64 / not-an-image / extension mismatch), 403 (cross-origin),
+409 (name taken in that zone), 413 (too large), or 503 (no attachment store).
+`remove` answers 501 with the path and a hint naming the file to delete by hand.
+Every response is `cache-control: no-store`, and the error envelope is
+`{ ok: false, error, hint? }`.
 
 Registered through `ctx.webServer.register({ kind: 'exact', path, handler })`
 inside `ctx.effect` — the proven 0.2.x shape (`dsh-autocompact/src/gui.ts:44-54,377-404`).
-Config writes are **not** hand-rolled: the native settings form owns them.
+Config writes are **not** hand-rolled: the native settings form owns them. A
+composition with no web server is reported in the log, not thrown: the tools work
+headless.
 
 ## 6. Security
 

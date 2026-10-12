@@ -56,8 +56,11 @@ volatile `route` group, so the route is the one in the Settings form.
 
 - `tests/child.spec.ts` (17 tests) runs the **real** stock `apply` against a fake
   Context, so what is asserted is the configuration handed over, not a stand-in.
-- Full suite: 8 files / 160 tests PASS. `tsc --noEmit` exit 0.
+- Full suite at the time of writing: 8 files / 160 tests PASS. `tsc --noEmit`
+  exit 0.
 - `--dump-config` with this patch: exit 0, plugin row composed.
+- Re-verified after the GUI half landed: 11 files / **280 tests** PASS,
+  `tsc --noEmit` exit 0, `--dump-config` exit 0.
 
 ---
 
@@ -79,3 +82,88 @@ naming it safe.
 
 **Why this is recorded**: it is the kind of trap that reads as a passing test.
 A future plugin author could reasonably believe the mount validates the filter.
+
+---
+
+## D-3 — An uploaded image is committed to the attachment store, not written into a zone folder
+
+**Planned** (`docs/PLAN.md`, A1): the upload route writes the received bytes into
+`reference/` or `capture/`.
+
+**Built**: the route commits the decoded bytes with
+`ctx.attachments.saveImage({ data, mediaType, name })` and records the returned
+reference in a small index, `<inbox>/uploads.json`. Nothing in this plugin writes
+image bytes anywhere.
+
+**Why the plan's mechanism is impossible**
+
+The mounted filesystem service has **no binary write and no delete**. Its write
+surface is `writeText` (UTF-8) and `editText` (text replacement); there is no
+`writeBytes`, no `mkdir`, and no `remove`/`unlink`
+(`packages/fs/fs/src/types.ts`, the `Fs` service). Passing image bytes through
+`writeText` would corrupt them, and a folder cannot be created for a first-ever
+upload. `writeFileAtomic` does create missing parents
+(`packages/fs/fs-local/src/fsio.ts:598`), but it is not reachable through the
+service.
+
+**What replaced it, and why it is the better owner anyway**
+
+The harness's own `AttachmentStore` is the one component that can durably commit
+bytes. It validates the fully decoded raster, applies the deployment's
+normalization policy, and returns a **content-addressed** reference. The index
+stores only that reference:
+
+- **A path is never trusted from disk.** Every read re-derives the host path via
+  `attachments.imageHostPath(ref)` and gets the bytes via
+  `attachments.readImage(ref)`. A hand-edited `uploads.json` therefore cannot
+  point this plugin at an arbitrary local image and become a way around
+  `read_image`'s route gate. `uploads.json` is read as untrusted input and every
+  field is validated (`src/uploads.ts:asRef`).
+- **An append is revision-guarded.** `createIfAbsent` when the index is absent,
+  `replaceIfVersion` when it exists, so a concurrent upload cannot silently drop
+  an entry (`src/uploads.ts:writeUploadIndex`). An index that exists but cannot be
+  parsed is **refused**, not overwritten, so a user's upload history is never
+  discarded to accept one more image.
+- **The two sources stay distinguishable.** `reference/` and `capture/` remain
+  real folders for images placed there by hand; `vision_inbox` and the panel
+  label each image `folder` or `upload`, because a folder image is the user's own
+  file while an upload is an immutable store object.
+
+**Costs, recorded honestly**
+
+- A store may normalize: resize, re-encode, strip metadata. So an upload's
+  `sha256` is the digest of the bytes the vision route will actually be given, not
+  of the file the user picked (`tests/uploads.spec.ts` proves this).
+- A deployment whose attachment store exposes no host path cannot route an upload
+  at all. `upload` answers 503 and says the image was committed but is
+  unreachable, rather than reporting a success the vision route could not use.
+- There is no delete. `remove` answers **501** with the path and a hint. This is
+  deliberate: a route that claimed to delete and did not would be the one place in
+  this plugin that lies about what happened.
+
+**Evidence**: `tests/uploads.spec.ts` (56 tests) and the upload half of
+`tests/gui.spec.ts` (39 tests) drive the real `inbox.ts`/`uploads.ts` against a
+fake filesystem and a structural store; the intent-enforcing fake proves which
+write intent `appendUpload` passes.
+
+---
+
+## D-4 — The host route contract is `/inbox` + `/upload` + `/remove`, not `/status` + `/list` + `/upload`
+
+**Planned** (`docs/SPEC.md` §5.4, first draft): a `/status` route (enabled, route
+capability, counts, cache size) and a separate `/list` route (the images).
+
+**Built**: one `GET /dsh-vision-bridge/inbox` returns everything the panel
+renders, plus the three frozen routes above.
+
+**Why**: the panel is one surface. Two routes meant two round trips, two failure
+modes, and a window in which the header could disagree with the list it headed —
+for a panel whose whole job is to state the truth about what is in the inbox. One
+listing cannot contradict itself. The `remove` route is new: the panel needs a
+place to show the refusal, and answering on a route that names the operation is
+more honest than a button that silently does nothing.
+
+**Recorded because**: it is a user-visible interface change made after the spec
+was written, and the client half was already coded against the frozen contract, so
+the spec had to be brought forward rather than the code bent back.
+
