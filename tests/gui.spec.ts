@@ -804,4 +804,92 @@ describe('installVisionGui', () => {
     expect(installVisionGui(plugin.ctx, deps)).toBe(false)
     expect(plugin.logs.join('\n')).toContain('could not install the inbox panel')
   })
+
+  /**
+   * A context whose web server is only reachable through `ctx.inject`, which is
+   * the real host shape (incident I-4): the base context deliberately has no
+   * `webServer` and its `effect` throws if the registration bypasses injection.
+   */
+  function injectedCtx(options: {
+    childHasWebServer?: boolean
+    injectThrows?: boolean
+    neverActivates?: boolean
+  } = {}): PluginCtx & { dependencies: string[][] } {
+    const logs: string[] = []
+    const registered: string[] = []
+    const unregistered: string[] = []
+    const dependencies: string[][] = []
+    const disposers: Array<() => void> = []
+    const logger = {
+      info: (message: string) => { logs.push('info: ' + message) },
+      warn: (message: string) => { logs.push('warn: ' + message) },
+    }
+    const base: Record<string, unknown> = {
+      logger,
+      effect() { throw new Error('the base context must not register directly') },
+      inject(names: string[], callback: (scope: unknown) => void) {
+        if (options.injectThrows === true) throw new Error('injection is unavailable here')
+        dependencies.push(names)
+        if (options.neverActivates === true) return
+        const child: Record<string, unknown> = {
+          logger,
+          effect(register: () => (() => void) | void) {
+            const dispose = register()
+            if (typeof dispose === 'function') disposers.push(dispose)
+          },
+        }
+        if (options.childHasWebServer !== false) {
+          child.webServer = {
+            register(route: GuiRoute) {
+              registered.push(route.path)
+              return () => { unregistered.push(route.path) }
+            },
+          } satisfies WebServerLike
+        }
+        callback(child)
+      },
+    }
+    return {
+      ctx: base as unknown as Context,
+      logs,
+      registered,
+      unregistered,
+      dependencies,
+      runDisposers: () => { for (const dispose of disposers) dispose() },
+    }
+  }
+
+  it('arranges registration through the injected webServer dependency, not a bare read', async () => {
+    const { deps } = await harness()
+    const plugin = injectedCtx()
+    expect(installVisionGui(plugin.ctx, deps)).toBe(true)
+    expect(plugin.dependencies).toEqual([['webServer']])
+    expect(plugin.registered).toEqual([INBOX_ROUTE, UPLOAD_ROUTE, REMOVE_ROUTE])
+    plugin.runDisposers()
+    expect(plugin.unregistered).toEqual([INBOX_ROUTE, UPLOAD_ROUTE, REMOVE_ROUTE])
+  })
+
+  it('stays quiet when the injected web server never appears', async () => {
+    const { deps } = await harness()
+    const plugin = injectedCtx({ neverActivates: true })
+    expect(installVisionGui(plugin.ctx, deps)).toBe(true)
+    expect(plugin.dependencies).toEqual([['webServer']])
+    expect(plugin.registered).toEqual([])
+    expect(plugin.logs).toEqual([])
+  })
+
+  it('reports a child scope that has no web server', async () => {
+    const { deps } = await harness()
+    const plugin = injectedCtx({ childHasWebServer: false })
+    expect(installVisionGui(plugin.ctx, deps)).toBe(true)
+    expect(plugin.registered).toEqual([])
+    expect(plugin.logs.join('\n')).toContain('no web server in this composition')
+  })
+
+  it('reports a failing injection', async () => {
+    const { deps } = await harness()
+    const plugin = injectedCtx({ injectThrows: true })
+    expect(installVisionGui(plugin.ctx, deps)).toBe(false)
+    expect(plugin.logs.join('\n')).toContain('could not arrange the inbox panel')
+  })
 })

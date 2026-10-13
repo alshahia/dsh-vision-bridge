@@ -525,43 +525,66 @@ export function createVisionRoutes(deps: VisionGuiDeps): GuiRoute[] {
 /**
  * Register the routes on the web server, when this composition has one.
  *
- * Absence is reported, not thrown: a headless composition is a legitimate place
- * to mount this plugin, and the tools work there.
+ * `webServer` is an OPTIONAL dependency, so it does not belong in the plugin's
+ * `inject`: a headless composition is a legitimate place to mount this plugin,
+ * and the tools work there. The sanctioned optional form is
+ * `ctx.inject(['webServer'], …)`, which activates a child fiber only once the
+ * service is actually reachable. A bare `ctx.webServer` read at apply time is
+ * NOT equivalent: while a live profile reload is still initializing the web
+ * carrier the read returns undefined, registration is skipped, and every panel
+ * request then answers 404 for the life of that apply (incident I-4). When no
+ * web server ever appears the callback simply never runs and the panel stays
+ * off, silently — which is the intended headless behavior.
  * @param ctx - plugin context.
  * @param deps - injected dependencies.
- * @returns whether the routes were registered.
+ * @returns whether the routes were registered, or their registration was
+ *   arranged for whenever a web server appears.
  */
 export function installVisionGui(ctx: Context, deps: VisionGuiDeps): boolean {
-  const server = safeGet<WebServerLike>(ctx, 'webServer')
-  if (server === undefined || typeof server.register !== 'function') {
-    ctx.logger.info('dsh-vision-bridge: no web server in this composition; the inbox panel is off and the '
-      + 'tools are unaffected')
-    return false
-  }
-  try {
-    ctx.effect(() => {
-      const disposers: Array<() => void> = []
-      for (const route of createVisionRoutes(deps)) {
-        try {
-          disposers.push(server.register(route))
-        } catch (error: unknown) {
-          ctx.logger.warn('dsh-vision-bridge: could not register ' + route.path + ' (' + messageOf(error)
-            + '); the inbox panel is partly unavailable')
-        }
-      }
-      return () => {
-        for (const dispose of disposers) {
+  const install = (scope: Context): boolean => {
+    const server = safeGet<WebServerLike>(scope, 'webServer')
+    if (server === undefined || typeof server.register !== 'function') {
+      ctx.logger.info('dsh-vision-bridge: no web server in this composition; the inbox panel is off and the '
+        + 'tools are unaffected')
+      return false
+    }
+    try {
+      scope.effect(() => {
+        const disposers: Array<() => void> = []
+        for (const route of createVisionRoutes(deps)) {
           try {
-            dispose()
-          } catch {
-            // A failing disposer must not stop the remaining ones.
+            disposers.push(server.register(route))
+          } catch (error: unknown) {
+            ctx.logger.warn('dsh-vision-bridge: could not register ' + route.path + ' (' + messageOf(error)
+              + '); the inbox panel is partly unavailable')
           }
         }
-      }
-    })
-    return true
-  } catch (error: unknown) {
-    ctx.logger.warn('dsh-vision-bridge: could not install the inbox panel (' + messageOf(error) + ')')
-    return false
+        return () => {
+          for (const dispose of disposers) {
+            try {
+              dispose()
+            } catch {
+              // A failing disposer must not stop the remaining ones.
+            }
+          }
+        }
+      })
+      return true
+    } catch (error: unknown) {
+      ctx.logger.warn('dsh-vision-bridge: could not install the inbox panel (' + messageOf(error) + ')')
+      return false
+    }
   }
+  // A context without `inject` is a minimal/structural one (tests, a hand-built
+  // host); there the direct read is the only available path.
+  if (typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['webServer'], (scope: Context) => { install(scope) })
+      return true
+    } catch (error: unknown) {
+      ctx.logger.warn('dsh-vision-bridge: could not arrange the inbox panel (' + messageOf(error) + ')')
+      return false
+    }
+  }
+  return install(ctx)
 }
