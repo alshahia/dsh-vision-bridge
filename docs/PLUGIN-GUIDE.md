@@ -1,8 +1,9 @@
 # Plugin guide — what `dsh-vision-bridge` hands to the next plugin
 
 This is this project's **own** note. The universal, cross-project material lives in
-`D:\my_deepseek_harness\dsh-plugin-playbook` (copy, no remote) and, authoritatively,
-in `D:\my_deepseek_harness\deepseek_plugins\docs\best-practices\`. This file exists so
+`D:\my_deepseek_harness\dsh-plugin-playbook` (copy, no remote), whose `guides\` folder now
+carries the deep guides; the originals are archived read-only at
+`_archive\deepseek_plugins\docs\best-practices\`. This file exists so
 the next plugin can be built from *this* one without re-deriving it: read §2 for the
 patterns, §3 for the traps, §4 for the copy list, §6 for the checks.
 
@@ -107,8 +108,9 @@ panel deliberately renders no config inputs.
 
 ## 4. What to copy for the next plugin (order that works)
 
-1. `README.md` §2's install path, then the skeleton in
-   `deepseek_plugins/_template-plugin/` for the host half.
+1. `README.md` §2's install path, then the protocol in the playbook's
+   `guides/plugin-template-protocol.md` for the host half (the actual skeleton files are
+   archived at `_archive/deepseek_plugins/_template-plugin/`).
 2. `src/config.ts` — the volatile-group shape (`z.object({...}).volatile()`; a volatile
    node may not live inside an array item, so `tasks` is volatile as a whole).
 3. `src/service.ts` (`safeGet`/`requireService`) — never hard-inject a service you can
@@ -175,10 +177,10 @@ I-4).
 
 | Finding | Goes to |
 |---|---|
-| The `file://`-row claim is refuted | `deepseek_plugins/docs/best-practices/shortest-path-to-a-plugin.md` + `creating-a-client-card-plugin.md`, and the playbook's copies |
+| The `file://`-row claim is refuted | the playbook's `guides/shortest-path-to-a-plugin.md` + `guides/creating-a-client-card-plugin.md` (both corrected there 2026-10-13; the originals are archived at `_archive/deepseek_plugins/docs/best-practices/`) |
 | A user-facing flag must be a host check **and** a rendered state | `creating-a-client-card-plugin.md` (panel states) |
 | A fake that ignores its argument makes a passing test vacuous | `plugin-checklist.md` |
 | The `enabled` gap and the corrected claim | `docs/incidents/` here, and the playbook's incident index |
-| An optional service must be read with `ctx.get`/`ctx.inject` — a bare property read throws, and `catch { return undefined }` converts that host rule violation into a silent capability absence | `deepseek_plugins/docs/best-practices/creating-a-source-plugin.md` §3b + `shortest-path-to-a-plugin.md` (new trap), MEMORY §8, and the playbook's incident index |
-| A re-apply re-runs `apply()` but does not re-import a cached module → a host `src/*.ts` change needs a harness start | both funnel guides + `creating-a-source-plugin.md`, MEMORY §7/§8, TASKS.md |
-| A `file:///` row only works for a self-contained module; a package with bare imports must be mounted by package name through the profile junction | `shortest-path-to-a-plugin.md`, `creating-a-source-plugin.md` §4 |
+| An optional service must be read with `ctx.get`/`ctx.inject` — a bare property read throws, and `catch { return undefined }` converts that host rule violation into a silent capability absence | the playbook's `guides/creating-a-source-plugin.md` §3b + `guides/shortest-path-to-a-plugin.md` (new trap), MEMORY §8, and the playbook's incident index |
+| A re-apply re-runs `apply()` but does not re-import a cached module → a host `src/*.ts` change needs a harness start | the playbook's funnel guides + `guides/creating-a-source-plugin.md`, MEMORY §7/§8, TASKS.md |
+| A `file:///` row only works for a self-contained module; a package with bare imports must be mounted by package name through the profile junction | the playbook's `guides/shortest-path-to-a-plugin.md`, `guides/creating-a-source-plugin.md` §4 |

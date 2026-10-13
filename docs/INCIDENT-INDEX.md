@@ -3,8 +3,8 @@
 Every real issue this plugin produced or inherited, where its record lives, and what a
 future agent should take from it. Standalone records live in `docs/incidents/`; the
 universal cross-project copies live in `D:\my_deepseek_harness\dsh-plugin-playbook`
-(copy, no remote) with the workspace docs under
-`deepseek_plugins\docs\best-practices\` staying authoritative.
+(copy, no remote), whose `guides\` folder now carries the deep guides; the originals are
+archived read-only at `_archive\deepseek_plugins\docs\best-practices\`.
 
 Read this when something here misbehaves, and before "fixing" code back to what a
 guide says.

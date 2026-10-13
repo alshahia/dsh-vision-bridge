@@ -15,12 +15,14 @@ Both copies of the funnel guide said:
 > silently drops the bundle.
 > — `dsh-plugin-playbook/guides/shortest-path-to-a-plugin.md:49-50`,
 > `deepseek_plugins/docs/best-practices/shortest-path-to-a-plugin.md:53-54`
+> (historical path; that guide now lives in the playbook as `guides/shortest-path-to-a-plugin.md`)
 
 and the client-card guide repeated it:
 
 > The patch row's `name` must be the package name. A `file://` URL is legal for a
 > source-only plugin but **silently drops the client bundle** (§5.1).
 > — `deepseek_plugins/docs/best-practices/creating-a-client-card-plugin.md:290-291`
+> (historical path; that guide now lives in the playbook as `guides/creating-a-client-card-plugin.md`)
 
 The claim originated in `2026-10-12-bundle-mount-composition-traps.md:57-60`, which
 attributed it to the *client-inject-package-names* incident — an incident about
@@ -87,9 +89,11 @@ So for a plugin whose `package.json` sits at the folder root above `src/`, a
   cites the code and the target's test, and keeps `install_bundle` as the recommended,
   proven path.
 - `docs/PLUGIN-GUIDE.md` carries the corrected trap.
-- The guide and the playbook copies are corrected at the source
+- The guide and the playbook copies were corrected at the source
   (`deepseek_plugins/docs/best-practices/*`), because the playbook is a copy and the
-  sources stay authoritative.
+  sources stayed authoritative. Both copies were taken into the playbook's `guides/`
+  folder on 2026-10-13, when that source repository was archived at
+  `_archive/deepseek_plugins/`.
 
 ## Why it is recorded
 

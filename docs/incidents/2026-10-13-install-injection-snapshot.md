@@ -87,6 +87,10 @@ were written, with **no restart**:
 | Client half live | `cordis_inspect_query` client `Slots.listSubTree {root:'conversation.composer.dock'}` | occupant `id: dsh-vision-bridge`, `order: 55`, `active: true` — in the page that was already open |
 | GUI toggle re-applies | `plugin_manager set_plugin include:dsh-vision-bridge enabled:false` then `true` | Config `schema` → `inactive` → `schema`, and `vision_inbox` worked again after re-enable |
 
+> The `vision_inbox` row above is a **verbatim 2026-10-12 tool result**: the session's project
+directory was the legacy plugin workspace, which moved to `_archive/deepseek_plugins/` on
+2026-10-13. The observation it records (tool live, route unset, no images) is unaffected.
+
 Composition was checked read-only first, from the checkout
 (`D:\deepseek-harness_2`, workdir = checkout):
 

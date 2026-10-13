@@ -111,8 +111,9 @@ junction must be reachable and the patch row must use the **package name**.
 - Register this plugin in `D:\my_deepseek_harness\dsh-plugin-playbook` as a
   step-stone pointer (the playbook is a copy-and-point hub; each project keeps
   its own notes).
-- Feed every new trap back into `deepseek_plugins\docs\best-practices\` and
-  `_template-plugin\` in the same task that proved it.
+- Feed every new trap back into the playbook's `guides\` folder in the same task that
+  proved it (the archived originals at `_archive\deepseek_plugins\docs\best-practices\`
+  are frozen; the playbook is where the living copies are).
 
 ---
 
