@@ -33,39 +33,55 @@ you made elsewhere.
 
 ## 2. Install
 
-The plugin is a local folder; there is no registry package. Install it into the
-running profile with the plugin manager's `install_bundle`, whose spec must be an
-**absolute** local path:
+The plugin is a local folder; there is no registry package. The **verified** install
+in this profile is a profile junction plus a patch row that names the package — the
+same shape as the sibling `dsh-autocompact` install, and the shape that keeps the
+source **live**:
 
+```powershell
+# 1. junction — no pnpm run, no change to the profile's package.json
+New-Item -ItemType Junction `
+  -Path   "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-vision-bridge" `
+  -Target 'D:\my_deepseek_harness\dsh-vision-bridge'
 ```
-plugin_manager  action: install_bundle
-                target: file:D:\my_deepseek_harness\dsh-vision-bridge
+
+```yaml
+# 2. append to %USERPROFILE%\.dsh\profiles\web\cordis.patch.yml (back it up first)
+- insert:
+    - id: dsh-vision-bridge
+      name: 'dsh-vision-bridge'
 ```
 
-Why install the package rather than add a `cordis.patch.yml` row: both work for the
-host half, and both are *supposed* to work for the client half — the client registry
-locates a row's owning `package.json` either through the resolved bare name or, for a
-path-like row, by walking up from the module
-(`packages/client/modules/src/index.ts:871-905`), and the target tests exactly that
-for a `file:` URL row (`packages/client/modules/tests/node-half.client.spec.ts:326-338`).
-Installing is the **proven** path: the sibling `dsh-autocompact` install in this
-profile mounted a bare-name row through a profile junction and its client bundle was
-verified in the live boot graph (`clientModules.clientPath` returned the bundle).
-The `file://`-row route is unverified live here, and the plugin's own
-`cordis.patch.yml` (used by `install_bundle`) carries the bare package name for that
-reason. See `docs/INCIDENT-INDEX.md` → I-1 for the corrected claim.
+**Verified live 2026-10-13** in this profile (`patchReload: live`): after the junction
+and the row were added, `include:dsh-vision-bridge` reported `status: "schema"`, both
+tools appeared in the live Host tool list, and the client half registered itself as an
+occupant of `conversation.composer.dock` (id `dsh-vision-bridge`, order 55) in the
+already-open page — no harness restart and no page refresh were needed. A GUI
+disable → enable toggle re-applies the row live (`schema` → `inactive` → `schema`).
 
-Delivery semantics after installing:
+### Do not develop against `install_bundle`
+
+`plugin_manager install_bundle` with an absolute `file:` spec **does** work (exit 0,
+the row composes, `list_bundles` shows it `installed: true`), but pnpm installs a
+`file:` dependency by **injection**: `node_modules\dsh-vision-bridge` becomes a
+hard-linked *snapshot copy* (the profile's `.modules.yaml` records it under
+`injectedDeps`), not a link. A later source edit therefore never reaches the harness,
+and running `install_bundle` again answers `changed:false` / pnpm "Already up to
+date" without re-syncing the copy — you would be editing files the harness is not
+running. Use `install_bundle` for a **frozen** release only; `remove_bundle` undoes it
+cleanly (verified: profile `package.json` and `node_modules` return to their prior
+state). The plugin still ships `cordis.patch.yml` as its bundle patch so that route
+remains available. See `docs/INCIDENT-INDEX.md` → I-3.
+
+Delivery semantics (junction + row):
 
 | Change | When it takes effect |
 |---|---|
-| The plugin row and its links | Immediately (live profile) |
+| The plugin row and its links | Immediately on save (`patchReload: live`) |
 | `Config` (Settings → Plugins → dsh-vision-bridge) | Immediately — the groups are volatile |
-| `client.js` (the panel) | Next page load — hard-refresh the Web UI |
-| Host `src/*.ts` | Next harness start |
-
-The panel is the only half that needs a refresh; the tools are usable as soon as
-the row is live.
+| `client.js` (the panel) | Immediately in a running page; hard-refresh if the panel looks stale |
+| Host `src/*.ts` | On the next **re-apply** of the row — toggle the plugin off/on in Settings → Plugins, or restart the harness |
+| The two `vision_agent*` tools | Only when the row applies: they mount at apply time, and only if a route is configured. Set the route, then toggle the plugin off/on (or restart) to mount them. `describe_image` reads the route per call, so it works the moment the route is set. |
 
 ## 3. Configure — all of it from the GUI
 
@@ -148,11 +164,13 @@ that reads like an instruction. Therefore:
 4. **The route is read once at mount** for the sub-agents. A later `route` change
    reaches `describe_image` immediately, but the two `vision_agent*` children keep
    the route they were mounted with until the plugin reloads.
-5. **The browser rendering is unverified.** The client bundle parses, registers its
-   slot, and is contract-tested (25 tests), but no automated browser check of the
-   panel has been run — it is a user checkpoint.
-6. **The panel needs a page refresh** to appear after install; the host half does
-   not.
+5. **The browser rendering is unverified.** The client bundle parses, is
+   contract-tested (26 tests), and its live registration was confirmed 2026-10-13
+   (slot occupant `dsh-vision-bridge`, order 55, `active: true`), but no automated
+   browser check of how the panel *looks* has been run — it is a user checkpoint.
+6. **The vision children mount only at apply time.** With the route unset they are
+   absent by design (D-1); after setting it, toggle the plugin off/on in
+   Settings → Plugins (or restart) to mount them.
 7. **A vision route is required.** With `route` unset, `describe_image` fails with
    a clear message rather than falling back to a route that cannot see.
 8. **Plugin routes are not behind the GUI session gate** (see §5).
@@ -160,11 +178,11 @@ that reads like an instruction. Therefore:
 ## 7. Verify
 
 ```powershell
-# Unit + contract tests (11 files / 280 tests)
+# Unit + contract tests (11 files / 283 tests) — workdir = this plugin folder
 & 'D:\deepseek-harness_2\node_modules\.bin\vitest.CMD' run
 
 # Type check
-& 'D:\deepseek_harness_2\node_modules\.bin\tsc.CMD' -p 'D:\my_deepseek_harness\dsh-vision-bridge\tsconfig.json' --noEmit
+& 'D:\deepseek-harness_2\node_modules\.bin\tsc.CMD' -p 'D:\my_deepseek_harness\dsh-vision-bridge\tsconfig.json' --noEmit
 
 # Composition: the row mounts and resolves (workdir = the checkout)
 node --import tsx/esm apps/cli/src/bin.ts --profile web --patch '<patch>' --dump-config

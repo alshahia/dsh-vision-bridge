@@ -104,8 +104,12 @@ verbatim.
 
 ## Verifying it in the browser
 
-The GUI half cannot be verified by an agent session; it is a user checkpoint
-(`docs/SPEC.md` §8: "The GUI shows and uploads — user checkpoint"). To check it:
+What an agent session *can* verify was verified live on 2026-10-13: the bundle is
+served and executed — `cordis_inspect_query` client `Slots.listSubTree` on
+`conversation.composer.dock` lists the occupant `dsh-vision-bridge` (order 55,
+`active: true`), in a page that was already open. How the panel **looks and behaves**
+is still a user checkpoint (`docs/SPEC.md` §8: "The GUI shows and uploads — user
+checkpoint"). To check it:
 
 1. Reload the harness Web UI at its usual URL (a hard refresh, so the new
    `client.js` is fetched). Watch the browser console: a registration failure
@@ -126,9 +130,13 @@ The GUI half cannot be verified by an agent session; it is a user checkpoint
    disabled, and a `curl`-style `POST /dsh-vision-bridge/upload` must answer `403`
    without committing anything. Turn it back on.
 
-There is no build step to run and no bundle artifact to rebuild; editing
-`client.js` takes effect on the next page load (plus a harness restart if the
-package itself was reinstalled).
+There is no build step to run and no bundle artifact to rebuild. The package is
+mounted through a **junction**, so editing `client.js` takes effect in the running
+page (hard-refresh if it looks stale), and editing host `src/*.ts` takes effect when
+the row re-applies — toggle the plugin off/on in Settings → Plugins, or restart the
+harness. Do **not** reinstall this plugin with `install_bundle`: a `file:` spec
+installs a pnpm-injected snapshot copy that later edits never reach
+(`docs/incidents/2026-10-13-install-injection-snapshot.md`).
 
 ## Honest limitations
 

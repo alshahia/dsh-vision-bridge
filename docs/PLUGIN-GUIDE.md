@@ -41,17 +41,21 @@ panel deliberately renders no config inputs.
    did. `locatePkgJson` handles path-like rows by walking up to the owning
    `package.json` (`packages/client/modules/src/index.ts:871-905`), and the target tests
    it (`packages/client/modules/tests/node-half.client.spec.ts:326-338`). The proven
-   live install is still a **package** install (`install_bundle` with an absolute
-   `file:` spec). Full record: `docs/incidents/2026-10-13-file-url-row-client-bundle-claim.md`.
+   live install here is a **junction + a bare-name patch row** (verified 2026-10-13);
+   the plugin ships a bundle patch so `install_bundle` also works — but see trap 8
+   before using it to develop. Full record:
+   `docs/incidents/2026-10-13-file-url-row-client-bundle-claim.md`.
 2. **A switch in `Config` is not a switch in the product.** `enabled` gated the tools
    and not the GUI: the panel looked live and the upload route committed. A user-facing
    flag needs a host check **and** a rendered state.
    Record: `docs/incidents/2026-10-13-enabled-switch-gap.md`.
-3. **The client bundle is loaded per page, not per request.** `client.js` takes effect
-   on the next page load; host `src/*.ts` needs the next harness **start**; a volatile
-   config and a patch row are live. Never verify a client half by fetching
-   `/plugins/<id>/client.js` — that URL 404s for every package, including shipped ones
-   (playbook `2026-10-12-live-profile-install.md`).
+3. **A `patchReload: live` profile applies a junction + row entirely on save** — row,
+   tools, and (verified 2026-10-13) the client bundle in an already-open page: no
+   restart, no refresh. What still needs a **re-apply** is a *source change* to a module
+   that is already applied: toggle the plugin off/on in Settings → Plugins (verified
+   live: `schema` → `inactive` → `schema`) or restart. Never verify a client half by
+   fetching `/plugins/<id>/client.js` — that URL 404s for every package, including
+   shipped ones (playbook `2026-10-12-live-profile-install.md`).
 4. **A structural test fake can pass for the wrong reason.** In `tests/gui.spec.ts` the
    fake `scopeFor` originally ignored its argument, so the "the session shapes the
    project directory" assertion could never fail. Resolve the layout **per call**
@@ -64,6 +68,14 @@ panel deliberately renders no config inputs.
 7. **`defineTool`'s `parameters` DSL becomes JSON Schema.** A test that wants the
    *schema* must build it from `parameters.properties.x.type` / `parameters.required`,
    not from a JSON-Schema literal.
+8. **`install_bundle` with a `file:` spec installs a snapshot, not a link.** pnpm
+   *injects* a `file:` dependency: `node_modules/<name>` becomes a hard-linked copy
+   (`<profile>/node_modules/.modules.yaml` → `injectedDeps`), so a later source edit
+   never reaches the harness, and re-running the install answers `changed:false` /
+   "Already up to date" without re-syncing. It looks like a successful install the
+   whole time. Use a **junction + bare-name row** while developing;
+   `install_bundle` for a frozen release (`remove_bundle` reverts cleanly). Record:
+   `docs/incidents/2026-10-13-install-injection-snapshot.md`.
 
 ## 4. What to copy for the next plugin (order that works)
 
@@ -98,18 +110,34 @@ panel deliberately renders no config inputs.
 # 2. Types
 & 'D:\deepseek-harness_2\node_modules\.bin\tsc.CMD' -p 'D:\my_deepseek_harness\dsh-vision-bridge\tsconfig.json' --noEmit
 
-# 3. Composition — the row mounts and resolves (workdir = the checkout)
-node --import tsx/esm apps/cli/src/bin.ts --profile web --patch '<patch>' --dump-config
+# 3. Composition — the row mounts and resolves (workdir = the checkout).
+#    With the junction + row install the live profile is itself the subject;
+#    use --patch '<patch>' instead to check a patch file in isolation.
+node --import tsx/esm apps/cli/src/bin.ts --profile web --dump-config
 
-# 4. Module smoke test — every import evaluates, without booting a server
-node --import tsx/esm -e "import('file:///D:/my_deepseek_harness/dsh-vision-bridge/src/index.ts').then(m => console.log(m.name, typeof m.apply, m.inject))"
+# 4. Module smoke test — every import evaluates, without booting a server.
+#    Run from the plugin folder with the CHECKOUT's absolute tsx URL:
+#    `--import tsx/esm` fails there with ERR_MODULE_NOT_FOUND (tsx is not in
+#    the plugin's node_modules).
+node --import 'file:///D:/deepseek-harness_2/node_modules/tsx/dist/esm/index.mjs' -e "import('file:///D:/my_deepseek_harness/dsh-vision-bridge/src/index.ts').then(m => console.log(m.name, typeof m.apply, m.inject))"
 ```
 
 What each proves: (1) logic and the frozen contracts; (2) no type drift; (3) the
-loader can compose the row; (4) the host module graph evaluates — the cheapest
-guard against a boot-time import error before installing into a live profile.
-**None** of them proves activation, and none proves the panel renders: those are the
-user checkpoints in `docs/GUI.md`.
+loader can compose the row; (4) the host module graph evaluates — the cheapest guard
+against a boot-time import error before installing into a live profile.
+
+**Activation is also provable read-only, from inside a live session**, via the Inspect
+providers — do this instead of guessing from the delivery table:
+
+| Claim | Query |
+|---|---|
+| The row applied and its `Config` schema projected | host `Config.listConfigs {name}` → `status: "schema"` |
+| The tools are really registered | host `Tool.listTools` → the plugin's tool names |
+| The client half is really loaded | client `Slots.listSubTree {root:'conversation.composer.dock'}` → the occupant id |
+| A live re-apply works | `plugin_manager set_plugin` `enabled:false` → `true` → `schema` → `inactive` → `schema` |
+
+Still not provable this way: how the panel **looks** (user checkpoint in
+`docs/GUI.md`), and that a route-dependent child mounts (needs a real route).
 
 ## 7. Feedback owed (same task, not "someday")
 

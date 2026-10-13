@@ -200,3 +200,50 @@ and *still lists the inbox while disabled, and says so*; `tests/client.spec.ts` 
 *shows the master switch instead of offering controls that cannot work*. Full suite
 11 files / 283 tests PASS, `tsc --noEmit` exit 0 (commit `3753bbd`).
 
+---
+
+## D-6 — Installed as a junction + patch row, not with `install_bundle`, and no restart was needed
+
+**Planned** (`docs/PLAN.md:102-104`, A1.3): "Settings → Plugins install, one restart,
+then a user visual checkpoint. The junction must be reachable and the patch row must
+use the **package name**."
+
+**Built**: the junction and the bare-name patch row exactly as the plan's last
+sentence requires, but **not** through `install_bundle`; and neither half needed a
+restart.
+
+```powershell
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-vision-bridge" `
+  -Target 'D:\my_deepseek_harness\dsh-vision-bridge'
+```
+
+```yaml
+- insert:
+    - id: dsh-vision-bridge
+      name: 'dsh-vision-bridge'
+```
+
+**Why `install_bundle` was abandoned.** It works, and it was tried first: exit 0, row
+composed, `list_bundles` reported `installed: true`. But pnpm installs a `file:`
+dependency by **injection** — the profile gets a hard-linked *snapshot copy*
+(`.modules.yaml` → `injectedDeps`), so a later source edit never reaches the harness
+and re-running the install answers "Already up to date" without re-syncing. That is a
+silent staleness trap for a plugin under active development. `remove_bundle` undid it
+cleanly (profile `package.json` and `node_modules` back to their prior state).
+
+**Why no restart.** This profile sets `patchReload: live`. Immediately after the
+junction and row were saved — no restart, no page refresh — the row reported
+`status: "schema"`, both tools appeared in the live Host tool list, and the client
+half registered as an occupant of `conversation.composer.dock` (order 55). The plan's
+"one restart" was an assumption about the delivery table, not a requirement of the
+mechanism.
+
+**What still needs the user**: a vision `route` (their model choice), the panel's
+*appearance* in a real browser, and the two `vision_agent*` children — which mount only
+at apply time, so after setting the route the row must re-apply (GUI disable → enable,
+verified live, or a restart).
+
+**Evidence**: `docs/incidents/2026-10-13-install-injection-snapshot.md` (I-3) — probe
+file absent from the injected copy, second install `changed:false`, live Config/Tool/
+Slot queries, and the `schema → inactive → schema` toggle.
+
