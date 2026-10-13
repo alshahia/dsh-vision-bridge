@@ -241,9 +241,72 @@ mechanism.
 **What still needs the user**: a vision `route` (their model choice), the panel's
 *appearance* in a real browser, and the two `vision_agent*` children — which mount only
 at apply time, so after setting the route the row must re-apply (GUI disable → enable,
-verified live, or a restart).
+verified live, or a restart). That re-apply works because it re-runs `apply()` on the
+already-loaded module; it does **not** re-import the module, so a **source** change needs
+a harness start (measured 2026-10-13; see D-7 and I-4).
 
 **Evidence**: `docs/incidents/2026-10-13-install-injection-snapshot.md` (I-3) — probe
 file absent from the injected copy, second install `changed:false`, live Config/Tool/
 Slot queries, and the `schema → inactive → schema` toggle.
+
+---
+
+## D-7 — `safeGet` must not swallow the inject rule, and a re-apply is not a re-import (2026-10-13)
+
+**Finding** (measured live with a throwaway probe row; full record:
+`docs/incidents/2026-10-13-optional-service-read-404-panel.md`, indexed as I-4).
+
+`webServer` is an **optional** dependency of this plugin — deliberately not in `inject`,
+so a headless composition still mounts the tools. On this host, a service that is not
+declared in `inject` cannot be read **as a property** at all:
+
+```
+Error: cannot get property "webServer" without inject
+```
+
+`safeGet` wrapped the property read in `try { … } catch { return undefined }`, so the
+throw became "no web server in this composition" and `installVisionGui` registered **no
+routes**. Every panel request then answered 404 (`/` answered 401 — the auth-gated SPA
+fallback, which is what "no named route matched" looks like) while Config
+`status: "schema"`, both tools, and the client occupant all looked healthy. The identical
+swallow also hid `agents` in `projectDirForSession` — every session fell back to the
+launch directory, so the "per-project" inbox was not per-project — and `attachments`, so
+an uploaded image was never found in the attachment store.
+
+**Built (`8352710`).** `installVisionGui` consumes the service through
+`ctx.inject(['webServer'], scope => …)` — the form shipped code uses
+(`packages/client/modules/src/index.ts:653`,
+`packages/client/connection/src/index.ts:137`,
+`packages/api/gateway/src/index.ts:240`) — with the direct read kept only as the
+structural fallback for contexts without `inject` (unit tests, hand-built hosts).
+`safeGet` prefers `ctx.get(name)` (the sanctioned optional lookup, with an undefined
+check) and only then falls back to the property read, which keeps ambient handles
+(`logger`) and structural test contexts working.
+
+**Delivery rule measured in the same pass — a re-apply is not a re-import.** A GUI
+disable → enable toggle re-applies the patch generation and re-runs `apply()`, but an
+unchanged row keeps its fiber and its **cached module**. Measured: after editing the
+source and toggling off/on, `/dsh-vision-bridge/inbox` still answered 404, while an
+independent probe in the same profile proved the pattern the plugin now uses answers 200.
+So a host `src/*.ts` change needs the **next harness start**; a re-apply is enough only
+for work `apply()` does on the already-loaded module (e.g. the `vision_agent*` children
+mounting once a route is set).
+
+**`file:///` rows, one more time.** Mounting this plugin by
+`file:///D:/my_deepseek_harness/dsh-vision-bridge/src/index.ts` made the entry
+**disappear from the live composition** (no `Config.listConfigs` entry, tools gone),
+while the same form worked for the self-contained, import-free `.mjs` probe. A `file:///`
+row is therefore only for a self-contained module; a package with bare imports must be
+mounted by **package name** through the profile `node_modules` junction (I-1 again, from
+the other side).
+
+**Evidence**: the probe report verbatim, the three HTTP results, and the restored profile
+patch hash in `docs/incidents/2026-10-13-optional-service-read-404-panel.md` (the probe
+wrote `.live-test/probe-report.json`; the profile patch was backed up as
+`BCD515FCAE9800D1CCF470A559CC1796D4CEF738106626A0C32F16C61E41D49B` and restored
+byte-identically). Tests: four injected-path cases in `tests/gui.spec.ts` plus a new
+`tests/service.spec.ts`; suite **12 files / 295 tests PASS**, `tsc --noEmit` clean.
+
+**Live confirmation is still owed**: the running harness holds the pre-`8352710` module,
+so `/dsh-vision-bridge/inbox` answers 404 until the next harness start.
 

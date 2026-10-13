@@ -51,10 +51,16 @@ panel deliberately renders no config inputs.
    Record: `docs/incidents/2026-10-13-enabled-switch-gap.md`.
 3. **A `patchReload: live` profile applies a junction + row entirely on save** — row,
    tools, and (verified 2026-10-13) the client bundle in an already-open page: no
-   restart, no refresh. What still needs a **re-apply** is a *source change* to a module
-   that is already applied: toggle the plugin off/on in Settings → Plugins (verified
-   live: `schema` → `inactive` → `schema`) or restart. Never verify a client half by
-   fetching `/plugins/<id>/client.js` — that URL 404s for every package, including
+   restart, no refresh. A **re-apply** (toggle the plugin off/on in Settings → Plugins;
+   verified live `schema` → `inactive` → `schema`) re-runs `apply()` but does **not**
+   re-import a cached module — so a **source change** to host `src/*.ts` needs the next
+   **harness start**. What a re-apply *does* buy is apply-time work on the same module
+   (here: the route-dependent children mounting once a route is set). Measured
+   2026-10-13 (I-4): after editing the source and toggling off/on, the panel route still
+   answered 404 while an independent probe in the same profile proved the pattern it now
+   uses answers 200. Record:
+   `docs/incidents/2026-10-13-optional-service-read-404-panel.md`. Never verify a client
+   half by fetching `/plugins/<id>/client.js` — that URL 404s for every package, including
    shipped ones (playbook `2026-10-12-live-profile-install.md`).
 4. **A structural test fake can pass for the wrong reason.** In `tests/gui.spec.ts` the
    fake `scopeFor` originally ignored its argument, so the "the session shapes the
@@ -76,6 +82,28 @@ panel deliberately renders no config inputs.
    whole time. Use a **junction + bare-name row** while developing;
    `install_bundle` for a frozen release (`remove_bundle` reverts cleanly). Record:
    `docs/incidents/2026-10-13-install-injection-snapshot.md`.
+9. **An optional service is not readable as a bare property, and a `catch` must never
+   turn a host rule violation into "service absent".** `webServer` is an optional
+   dependency of this plugin — deliberately not in `inject`, so a headless composition
+   still mounts the tools. On this host, reading a service that is not declared in
+   `inject` **as a property** throws
+   `Error: cannot get property "webServer" without inject`. `safeGet` wrapped that read in
+   `try { … } catch { return undefined }`, so the throw became "no web server in this
+   composition" and `installVisionGui` registered **nothing**: every panel request
+   answered 404 while Config, both tools, and the client occupant all looked healthy. The
+   same swallow hid `agents` (`projectDirForSession` → every session fell back to the
+   launch dir, so the "per-project" inbox was not per-project) and `attachments` (an
+   uploaded image was never found in the attachment store). The sanctioned forms are
+   `ctx.get("webServer")` **with an undefined check** (optional) or
+   `inject: ['webServer']` + `ctx.webServer` (hard); this plugin consumes it through
+   `ctx.inject(['webServer'], scope => …)` and keeps the direct read only as the
+   structural fallback for contexts without `inject`. The harness's own tests guard this
+   trap and call it **"postmortem 0001"**
+   (`packages/fs/tool-fs-search/tests/load-path.spec.ts:1-15`; also
+   `packages/mcp/mcp-client/tests/load-path.spec.ts`,
+   `packages/subagent/tool-subagent/tests/tool-subagent.spec.ts:565`,
+   `packages/experimental/hooks-claude-code/tests/bridge.spec.ts:467`). Fixed in
+   `8352710`; record: `docs/incidents/2026-10-13-optional-service-read-404-panel.md`.
 
 ## 4. What to copy for the next plugin (order that works)
 
@@ -104,7 +132,7 @@ panel deliberately renders no config inputs.
 ## 6. Verification recipe
 
 ```powershell
-# 1. Unit + contract suite (11 files / 283 tests)
+# 1. Unit + contract suite (12 files / 295 tests)
 & 'D:\deepseek-harness_2\node_modules\.bin\vitest.CMD' run
 
 # 2. Types
@@ -134,10 +162,14 @@ providers — do this instead of guessing from the delivery table:
 | The row applied and its `Config` schema projected | host `Config.listConfigs {name}` → `status: "schema"` |
 | The tools are really registered | host `Tool.listTools` → the plugin's tool names |
 | The client half is really loaded | client `Slots.listSubTree {root:'conversation.composer.dock'}` → the occupant id |
-| A live re-apply works | `plugin_manager set_plugin` `enabled:false` → `true` → `schema` → `inactive` → `schema` |
+| The panel's routes are really **registered** | host HTTP `GET /dsh-vision-bridge/inbox` → **200**. A **404** while `GET /` answers **401** means *no named route matched* — the routes were never registered (I-4); the registered-occupant check above does **not** prove they exist |
+| A live re-apply works | `plugin_manager set_plugin` `enabled:false` → `true` → `schema` → `inactive` → `schema`. It re-runs `apply()` on the **cached** module — it does **not** re-import it, so it cannot pick up a source change (I-4) |
 
 Still not provable this way: how the panel **looks** (user checkpoint in
-`docs/GUI.md`), and that a route-dependent child mounts (needs a real route).
+`docs/GUI.md`), that a route-dependent child mounts (needs a real route), and — from the
+Inspect providers alone — that the panel's routes were **registered** (that is the HTTP
+200-vs-404 check in the table above; a registered occupant is not a registered route,
+I-4).
 
 ## 7. Feedback owed (same task, not "someday")
 
@@ -147,3 +179,6 @@ Still not provable this way: how the panel **looks** (user checkpoint in
 | A user-facing flag must be a host check **and** a rendered state | `creating-a-client-card-plugin.md` (panel states) |
 | A fake that ignores its argument makes a passing test vacuous | `plugin-checklist.md` |
 | The `enabled` gap and the corrected claim | `docs/incidents/` here, and the playbook's incident index |
+| An optional service must be read with `ctx.get`/`ctx.inject` — a bare property read throws, and `catch { return undefined }` converts that host rule violation into a silent capability absence | `deepseek_plugins/docs/best-practices/creating-a-source-plugin.md` §3b + `shortest-path-to-a-plugin.md` (new trap), MEMORY §8, and the playbook's incident index |
+| A re-apply re-runs `apply()` but does not re-import a cached module → a host `src/*.ts` change needs a harness start | both funnel guides + `creating-a-source-plugin.md`, MEMORY §7/§8, TASKS.md |
+| A `file:///` row only works for a self-contained module; a package with bare imports must be mounted by package name through the profile junction | `shortest-path-to-a-plugin.md`, `creating-a-source-plugin.md` §4 |

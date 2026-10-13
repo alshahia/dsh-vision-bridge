@@ -58,6 +58,11 @@ tools appeared in the live Host tool list, and the client half registered itself
 occupant of `conversation.composer.dock` (id `dsh-vision-bridge`, order 55) in the
 already-open page — no harness restart and no page refresh were needed. A GUI
 disable → enable toggle re-applies the row live (`schema` → `inactive` → `schema`).
+What that re-apply does **not** do is re-import the module: it re-runs `apply()` on the
+**cached** module, so a change to this plugin's host `src/*.ts` reaches the running
+harness only at the **next harness start** (measured 2026-10-13, I-4). Consequence for
+the panel: its routes are served only once the fixed module is live — until then every
+request under `/dsh-vision-bridge/` answers 404 even though the plugin looks applied.
 
 ### Do not develop against `install_bundle`
 
@@ -80,7 +85,7 @@ Delivery semantics (junction + row):
 | The plugin row and its links | Immediately on save (`patchReload: live`) |
 | `Config` (Settings → Plugins → dsh-vision-bridge) | Immediately — the groups are volatile |
 | `client.js` (the panel) | Immediately in a running page; hard-refresh if the panel looks stale |
-| Host `src/*.ts` | On the next **re-apply** of the row — toggle the plugin off/on in Settings → Plugins, or restart the harness |
+| Host `src/*.ts` | On the next **harness start**. A GUI toggle off/on re-applies the row, but a re-apply re-runs `apply()` on the **cached** module — it does **not** re-import it (measured 2026-10-13, I-4), so the panel's routes stay unregistered until the fixed module is live |
 | The two `vision_agent*` tools | Only when the row applies: they mount at apply time, and only if a route is configured. Set the route, then toggle the plugin off/on (or restart) to mount them. `describe_image` reads the route per call, so it works the moment the route is set. |
 
 ## 3. Configure — all of it from the GUI
@@ -174,11 +179,23 @@ that reads like an instruction. Therefore:
 7. **A vision route is required.** With `route` unset, `describe_image` fails with
    a clear message rather than falling back to a route that cannot see.
 8. **Plugin routes are not behind the GUI session gate** (see §5).
+9. **The panel's routes exist only once the fixed module is live.** The module is
+   imported once per process, so the `8352710` fix reaches the running harness only at
+   the **next harness start**; until then `GET /dsh-vision-bridge/inbox` answers **404**
+   while `GET /` answers **401** (the auth-gated SPA fallback) — the routes were never
+   *registered*, which is not a rendering failure. The panel once looked healthy on every
+   observable surface (Config `status: "schema"`, both tools mounted, the client occupant
+   registered) while every route 404'd, because an optional service read as a bare
+   property **throws** (`cannot get property "webServer" without inject`) and a
+   `catch { return undefined }` turned that host rule into "service absent". An optional
+   service is read with `ctx.get(name)` plus an undefined check, or consumed through
+   `ctx.inject([...], …)` — never as a bare property, never behind a swallow.
+   See `docs/INCIDENT-INDEX.md` → I-4.
 
 ## 7. Verify
 
 ```powershell
-# Unit + contract tests (11 files / 283 tests) — workdir = this plugin folder
+# Unit + contract tests (12 files / 295 tests) — workdir = this plugin folder
 & 'D:\deepseek-harness_2\node_modules\.bin\vitest.CMD' run
 
 # Type check

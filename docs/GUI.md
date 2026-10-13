@@ -107,9 +107,11 @@ verbatim.
 What an agent session *can* verify was verified live on 2026-10-13: the bundle is
 served and executed — `cordis_inspect_query` client `Slots.listSubTree` on
 `conversation.composer.dock` lists the occupant `dsh-vision-bridge` (order 55,
-`active: true`), in a page that was already open. How the panel **looks and behaves**
-is still a user checkpoint (`docs/SPEC.md` §8: "The GUI shows and uploads — user
-checkpoint"). To check it:
+`active: true`), in a page that was already open. **A registered occupant is not a
+registered route**, though: the same session measured
+`GET /dsh-vision-bridge/inbox` → **404** while the routes were missing (I-4). How the
+panel **looks and behaves** is still a user checkpoint (`docs/SPEC.md` §8: "The GUI shows
+and uploads — user checkpoint"). To check it:
 
 1. Reload the harness Web UI at its usual URL (a hard refresh, so the new
    `client.js` is fetched). Watch the browser console: a registration failure
@@ -122,6 +124,12 @@ checkpoint"). To check it:
 3. Read the host payload directly in a tab:
    `http://127.0.0.1:3080/dsh-vision-bridge/inbox` (add `?session=<id>` if
    needed). Compare its `images` array with the panel's list.
+   **Diagnostic:** a **404 here means the routes are not registered** — not that the
+   panel failed to render. The discriminator is the pair: `/dsh-vision-bridge/inbox` →
+   404 while `GET /` → 401 is the auth-gated SPA fallback, i.e. the web server matched
+   no named route. The routes appear only once the **fixed module is live** (the next
+   harness start; a GUI toggle does not re-import a cached module — I-4). The
+   registered-occupant check does **not** prove the routes exist.
 4. Upload a PNG in each zone and confirm the file appears in the zone directory
    shown in the panel and in the next `inbox` response.
 5. Press `Escape` and click outside: the panel closes, focus returns to the pill.
@@ -132,9 +140,10 @@ checkpoint"). To check it:
 
 There is no build step to run and no bundle artifact to rebuild. The package is
 mounted through a **junction**, so editing `client.js` takes effect in the running
-page (hard-refresh if it looks stale), and editing host `src/*.ts` takes effect when
-the row re-applies — toggle the plugin off/on in Settings → Plugins, or restart the
-harness. Do **not** reinstall this plugin with `install_bundle`: a `file:` spec
+page (hard-refresh if it looks stale). Editing host `src/*.ts` needs the **next harness
+start**: a GUI toggle off/on re-applies the row and re-runs `apply()`, but it does not
+re-import the cached module, so the new source is not what runs (measured 2026-10-13,
+I-4). Do **not** reinstall this plugin with `install_bundle`: a `file:` spec
 installs a pnpm-injected snapshot copy that later edits never reach
 (`docs/incidents/2026-10-13-install-injection-snapshot.md`).
 
