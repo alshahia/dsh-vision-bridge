@@ -527,14 +527,16 @@ export function createVisionRoutes(deps: VisionGuiDeps): GuiRoute[] {
  *
  * `webServer` is an OPTIONAL dependency, so it does not belong in the plugin's
  * `inject`: a headless composition is a legitimate place to mount this plugin,
- * and the tools work there. The sanctioned optional form is
- * `ctx.inject(['webServer'], …)`, which activates a child fiber only once the
- * service is actually reachable. A bare `ctx.webServer` read at apply time is
- * NOT equivalent: while a live profile reload is still initializing the web
- * carrier the read returns undefined, registration is skipped, and every panel
- * request then answers 404 for the life of that apply (incident I-4). When no
- * web server ever appears the callback simply never runs and the panel stays
- * off, silently — which is the intended headless behavior.
+ * and the tools work there. On this host a service that is not declared in
+ * `inject` cannot be read as a property at all — `ctx.webServer` THROWS
+ * `cannot get property "webServer" without inject` — so a `try/catch` around the
+ * property read reports "absent" for a server that is running, registration is
+ * skipped, and every panel request answers 404 for the life of that apply
+ * (incident I-4). The sanctioned optional form is `ctx.inject(['webServer'], …)`,
+ * which activates a child fiber once the service is actually reachable; the child
+ * scope may then read `scope.webServer`. When no web server ever appears the
+ * callback simply never runs and the panel stays off, silently — which is the
+ * intended headless behavior.
  * @param ctx - plugin context.
  * @param deps - injected dependencies.
  * @returns whether the routes were registered, or their registration was
