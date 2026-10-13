@@ -27,7 +27,11 @@ first listing arrives). Clicking it opens a floating panel that:
    verbatim.
 
 The panel has explicit loading, empty, and error states; a failed fetch or a
-missing route renders a message and a **Retry**, never a blank panel.
+missing route renders a message and a **Retry**, never a blank panel. When the
+bridge is switched off in Settings, the listing still answers `200` with
+`enabled: false`; the panel adds a **State: The bridge is disabled.** row, disables
+the file input and the Upload button, and points at the settings form. Absent
+listing data is *not* read as disabled, so nothing flashes off while loading.
 
 Configuration is **not** in this panel. The harness's native settings form
 renders this plugin's Config for free, and the footer points there:
@@ -85,7 +89,8 @@ POST /dsh-vision-bridge/upload
   { session?: string, zone: 'reference'|'capture', name: string, data: string /* base64, no "data:" prefix */ }
   → 200 { ok: true, zone, name, path, bytes, mediaType, sha256 }
   → 400 invalid body/zone/name/base64/not an image/extension mismatch/empty
-  → 403 cross-origin   → 409 name exists   → 413 too large
+  → 403 cross-origin, or the bridge is disabled (`enabled: false`)
+  → 409 name exists   → 413 too large
   → 503 no attachment store mounted in this profile   → 405 non-POST
 
 POST /dsh-vision-bridge/remove
@@ -116,6 +121,10 @@ The GUI half cannot be verified by an agent session; it is a user checkpoint
 4. Upload a PNG in each zone and confirm the file appears in the zone directory
    shown in the panel and in the next `inbox` response.
 5. Press `Escape` and click outside: the panel closes, focus returns to the pill.
+6. Turn `enabled` off in Settings → Plugins → dsh-vision-bridge, reload the panel:
+   the **State** row must appear, the file input and Upload button must be
+   disabled, and a `curl`-style `POST /dsh-vision-bridge/upload` must answer `403`
+   without committing anything. Turn it back on.
 
 There is no build step to run and no bundle artifact to rebuild; editing
 `client.js` takes effect on the next page load (plus a harness restart if the
@@ -147,4 +156,9 @@ package itself was reinstalled).
 - **Contract drift to reconcile:** `docs/SPEC.md` §5.4 still lists the earlier
   `/status` and `/list` routes; the frozen client contract implemented here is
   `/inbox`, `/upload`, `/remove`. The spec is user-approved and was not rewritten
-  by the client work.
+  by the client work. Both interface changes made after the spec are recorded in
+  `docs/DEVIATIONS.md` (D-4: one listing instead of two routes; D-5: the disabled
+  bridge is a `403` on upload and a rendered state in the panel).
+- **`403` has two meanings on `upload`** — cross-origin and disabled — told apart
+  by the message and `hint`, not by the status. The panel shows the message; a
+  future second consumer should branch on something better (D-5).

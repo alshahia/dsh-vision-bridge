@@ -59,7 +59,7 @@ volatile `route` group, so the route is the one in the Settings form.
 - Full suite at the time of writing: 8 files / 160 tests PASS. `tsc --noEmit`
   exit 0.
 - `--dump-config` with this patch: exit 0, plugin row composed.
-- Re-verified after the GUI half landed: 11 files / **280 tests** PASS,
+- Re-verified after the GUI half landed: 11 files / **283 tests** PASS,
   `tsc --noEmit` exit 0, `--dump-config` exit 0.
 
 ---
@@ -142,7 +142,7 @@ stores only that reference:
   this plugin that lies about what happened.
 
 **Evidence**: `tests/uploads.spec.ts` (56 tests) and the upload half of
-`tests/gui.spec.ts` (39 tests) drive the real `inbox.ts`/`uploads.ts` against a
+`tests/gui.spec.ts` (41 tests) drive the real `inbox.ts`/`uploads.ts` against a
 fake filesystem and a structural store; the intent-enforcing fake proves which
 write intent `appendUpload` passes.
 
@@ -166,4 +166,37 @@ more honest than a button that silently does nothing.
 **Recorded because**: it is a user-visible interface change made after the spec
 was written, and the client half was already coded against the frozen contract, so
 the spec had to be brought forward rather than the code bent back.
+
+---
+
+## D-5 — The `enabled` switch also gates the upload route (403), and the panel renders it
+
+**Planned** (`docs/SPEC.md` §5.4, frozen contract): the upload route's refusal
+codes are 400 (bad body/zone/name/base64/not-an-image), 403 (cross-origin), 409
+(name taken), 413 (too large), 503 (no attachment store), 405 (wrong method).
+`enabled` was described as gating the **tools**.
+
+**Built**: `upload` also answers **403** — same envelope, different message — when
+`config.enabled` is false, *before* the body is decoded or anything is committed;
+and the panel reports the state and turns its controls off.
+
+**Why**: the switch is a user-visible promise ("this plugin is off"), and it was
+only half kept. The panel rendered a fully working upload UI while the tools
+refused, and a stale page, a bookmark, or a hand-made request could still commit
+an image into an inbox the user had switched off. Two smaller honesty rules came
+with it: the listing still returns **200 with `enabled: false`** (the panel needs
+the images to render a useful disabled state, not a 500), and absent listing data
+is *not* treated as disabled, so nothing flashes off while the panel is loading.
+
+**Cost, recorded honestly**: 403 now has two meanings on this route — cross-origin
+and disabled — distinguished only by the message and the `hint`. A caller that
+branches on the status alone cannot tell them apart; the client does not, it shows
+the message. A future version should give the disabled case its own code if a
+second consumer ever appears.
+
+**Evidence**: `tests/gui.spec.ts` — *refuses an upload with 403 while the bridge is
+disabled* (asserts nothing reached the store and the index file was never created)
+and *still lists the inbox while disabled, and says so*; `tests/client.spec.ts` —
+*shows the master switch instead of offering controls that cannot work*. Full suite
+11 files / 283 tests PASS, `tsc --noEmit` exit 0 (commit `3753bbd`).
 

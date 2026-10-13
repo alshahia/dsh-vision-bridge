@@ -42,12 +42,18 @@ plugin_manager  action: install_bundle
                 target: file:D:\my_deepseek_harness\dsh-vision-bridge
 ```
 
-Why a real install and not a `cordis.patch.yml` row pointing at `src/index.ts`:
-a patch row whose `name` is a `file://` URL loads the host half but silently drops
-the **client** half, because the loader cannot read a `package.json` through a URL
-specifier to find `client.js`. Installing the folder makes `dsh-vision-bridge`
-resolvable by name, which is what the client-bundle loader needs. (Recorded as a
-trap in `docs/DEVIATIONS.md` and the plugin guide.)
+Why install the package rather than add a `cordis.patch.yml` row: both work for the
+host half, and both are *supposed* to work for the client half — the client registry
+locates a row's owning `package.json` either through the resolved bare name or, for a
+path-like row, by walking up from the module
+(`packages/client/modules/src/index.ts:871-905`), and the target tests exactly that
+for a `file:` URL row (`packages/client/modules/tests/node-half.client.spec.ts:326-338`).
+Installing is the **proven** path: the sibling `dsh-autocompact` install in this
+profile mounted a bare-name row through a profile junction and its client bundle was
+verified in the live boot graph (`clientModules.clientPath` returned the bundle).
+The `file://`-row route is unverified live here, and the plugin's own
+`cordis.patch.yml` (used by `install_bundle`) carries the bare package name for that
+reason. See `docs/INCIDENT-INDEX.md` → I-1 for the corrected claim.
 
 Delivery semantics after installing:
 
