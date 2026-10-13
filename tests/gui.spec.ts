@@ -181,6 +181,7 @@ async function harness(options: {
   hostPath?: 'derived' | 'missing'
   route?: { provider: string, model: string }
   probe?: 'ready' | 'not-ready' | 'throw'
+  enabled?: boolean
   scopeThrows?: boolean
   appendThrows?: string
 } = {}): Promise<Harness> {
@@ -188,6 +189,7 @@ async function harness(options: {
   const layout = await resolveInbox(fake.ctx, PROJECT, ROOT_REL)
   const config: ResolvedVisionConfig = {
     ...CONFIG,
+    ...options.enabled === undefined ? {} : { enabled: options.enabled },
     route: { ...CONFIG.route, ...options.route ?? {} },
   }
   const store = options.withStore === false ? undefined : makeStore(options.hostPath ?? 'derived')
@@ -579,8 +581,31 @@ describe('POST /dsh-vision-bridge/upload', () => {
     expect(otherZone.status).toBe(200)
   })
 
+  it('refuses an upload with 403 while the bridge is disabled', async () => {
+    const { routes, store, fake } = await harness({ enabled: false })
+    const result = await call(routeFor(routes, UPLOAD_ROUTE), fakeReq({
+      method: 'POST', headers: SAME_ORIGIN, body: uploadBody({ name: 'while-off.png' }),
+    }))
+    expect(result.status).toBe(403)
+    expect(String(result.json.error)).toContain('disabled')
+    expect(String(result.json.hint)).toContain('Settings')
+    // Nothing was committed, and nothing was written to the index either.
+    expect(store!.savedInputs).toEqual([])
+    expect(fake.files.has(INDEX_PATH)).toBe(false)
+  })
+
+  it('still lists the inbox while disabled, and says so', async () => {
+    const { routes } = await harness({ enabled: false })
+    const result = await call(routeFor(routes, INBOX_ROUTE), fakeReq({ method: 'GET', url: INBOX_ROUTE }))
+    expect(result.status).toBe(200)
+    expect(result.json.enabled).toBe(false)
+    // The panel needs the images to render a useful disabled state, not an error.
+    expect((result.json.images as unknown[]).length).toBe(2)
+  })
+
   it('refuses a cross-origin write with 403', async () => {
     const { routes, store } = await harness()
+
     const crossOriginHeaders: Array<Record<string, string>> = [
       { host: '127.0.0.1:3080', origin: 'http://evil.example' },
       { host: '127.0.0.1:3080', origin: 'not a url' },

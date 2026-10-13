@@ -135,6 +135,17 @@ describe('client bundle contract', () => {
     expect(client).toContain("'aria-describedby': 'dshvb-delete-hint'")
   })
 
+  it('shows the master switch instead of offering controls that cannot work', () => {
+    // A disabled bridge is a state the user set in the GUI, so the panel must
+    // say so and turn its controls off — not present a working-looking upload.
+    expect(client).toContain('data.enabled === false')
+    expect(client).toContain('var bridgeEnabled = !data || data.enabled !== false')
+    expect(client).toContain('disabled: uploading || !uploadsSupported || !bridgeEnabled')
+    expect(client).toContain('disabled: !bridgeEnabled')
+    expect(client).toContain("disabled: 'The bridge is disabled.'")
+    expect(client).toContain('disabledHint')
+  })
+
   it('labels the two zones by their trust, not by their folder name', () => {
     expect(client).toContain("zoneReference: 'Design / mockup (user-authored)'")
     expect(client).toContain("zoneCapture: 'Screenshot (app evidence)'")

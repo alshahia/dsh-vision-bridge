@@ -83,6 +83,9 @@
         labelRouteState: 'Route state',
         labelAgents: 'Sub-agents',
         labelTasks: 'Tasks',
+        labelState: 'State',
+        disabled: 'The bridge is disabled.',
+        disabledHint: 'Turn it on in Settings → Plugins → dsh-vision-bridge to upload images or describe them.',
         routeUnset: 'not configured',
         routeReady: 'ready',
         routeNotReady: 'not usable',
@@ -609,6 +612,9 @@
           if (Array.isArray(data.tasks) && data.tasks.length > 0) {
             statusRows.push({ key: 'tasks', label: t.labelTasks, value: data.tasks.join(', '), path: false })
           }
+          if (data.enabled === false) {
+            statusRows.push({ key: 'state', label: t.labelState, value: t.disabled, path: false })
+          }
         }
 
         var statusSection = data ? h('section', { className: 'dshvb-section', 'aria-label': t.statusHeading },
@@ -624,6 +630,9 @@
         ) : null
 
         var uploadsSupported = data ? data.uploadsSupported !== false : false
+        // Absent data (loading, or a failed load) is NOT "disabled": only a
+        // listing that says so turns the controls off, so nothing flashes.
+        var bridgeEnabled = !data || data.enabled !== false
         var zoneChoices = ZONES.map(function (entry) {
           return h('label', { key: entry.id, className: 'dshvb-choice', htmlFor: 'dshvb-zone-' + entry.id },
             h('input', {
@@ -653,6 +662,7 @@
               type: 'file',
               accept: 'image/png,image/jpeg,image/webp,image/gif',
               multiple: true,
+              disabled: !bridgeEnabled,
               onChange: function (event) {
                 var selected = event && event.target && event.target.files
                   ? Array.prototype.slice.call(event.target.files)
@@ -667,10 +677,11 @@
             h('button', {
               type: 'button',
               className: 'dshvb-button',
-              disabled: uploading || !uploadsSupported || files.length === 0,
+              disabled: uploading || !uploadsSupported || !bridgeEnabled || files.length === 0,
               onClick: runUpload,
             }, uploading ? t.uploading : t.upload),
           ),
+          bridgeEnabled ? null : h('p', { className: 'dshvb-note' }, t.disabled + ' ' + t.disabledHint),
           uploadsSupported ? null : h('p', { className: 'dshvb-note' }, t.uploadsUnsupported),
           uploadsSupported && files.length === 0 && !uploading ? h('p', { className: 'dshvb-note' }, t.noFiles) : null,
           results.length > 0 ? h('ul', { className: 'dshvb-results', role: 'status', 'aria-live': 'polite' },

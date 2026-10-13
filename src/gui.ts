@@ -392,6 +392,18 @@ async function uploadHandler(req: IncomingMessage, res: ServerResponse, deps: Vi
     return
   }
 
+  // The panel renders a disabled state from the listing, but the switch must also
+  // hold at the route: a stale page, a bookmark, or a hand-made request must not
+  // commit an image into an inbox the user has turned off.
+  if (!config.enabled) {
+    send(res, 403, {
+      ok: false,
+      error: 'the vision bridge is disabled, so it will not accept an upload',
+      hint: 'enable it in Settings -> Plugins -> dsh-vision-bridge',
+    })
+    return
+  }
+
   const named = checkUploadName(rawName, config.inbox.formats)
   if (!named.ok) {
     send(res, 400, { ok: false, error: named.error })
